@@ -11,27 +11,26 @@ import org.springframework.messaging.support.MessageBuilder;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.util.*;
 
 @EnableBinding(ICollector.class)
 public class CollectorService {
 
     private static final String NOT_PAID_ROUT_INPUT = "not_paid_rout";
+    private final long FINE_INTERVAL;
+    private final long FREE_PARKING_DURATION;
     private ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
-    private Map<String, LocalDateTime> parkedCars = new HashMap<>();
-    private Map<String, LocalDateTime> finedCars = new HashMap<>();
-
-    private long fineInterval = 24L;
-    private long freeParkingDuration = 10L;
+    public Map<String, LocalDateTime> parkedCars = new HashMap<>();
+    public Map<String, LocalDateTime> finedCars = new HashMap<>();
 
     private final
     ICollector collector;
 
     @Autowired
-    public CollectorService(ICollector collector) {
+    public CollectorService(ICollector collector, @Value("${fineInterval}") long fineInterval,
+                            @Value("${freeParkingDuration}") long freeParkingDuration) {
+        this.FINE_INTERVAL = fineInterval;
+        this.FREE_PARKING_DURATION = freeParkingDuration;
         Timer timer = new Timer();
         timer.schedule(new TimerTask() {
             @Override
@@ -39,7 +38,8 @@ public class CollectorService {
                 clearNotParkedCars();
             }
         }, 0, 1000 * 60 * freeParkingDuration);
-        timer.schedule(new TimerTask() {
+        Timer timer2 = new Timer();
+        timer2.schedule(new TimerTask() {
             @Override
             public void run() {
                 clearFinedCars();
@@ -49,40 +49,51 @@ public class CollectorService {
     }
 
     @StreamListener(ICollector.INPUT)
-    void takeValidData(String validData) throws IOException {
+    public void takeValidData(String validData) throws IOException {
         ParkObject parkObject = mapper.readValue(validData, ParkObject.class);
-        String key = parkObject.getParking_id()+":"+parkObject.getCar_number();
+        String key = parkObject.getParking_id() + ":" + parkObject.getCar_number();
         if (!finedCars.containsKey(key)) {
-            if (parkedCars.containsKey(key) &&
-                    parkObject.getDate_time().minusMinutes(freeParkingDuration).compareTo(parkedCars.get(key)) > 0) {
+            if (!parkedCars.containsKey(key)) {
+                parkedCars.put(key, parkObject.getDate_time());
+            } else if (parkObject.getDate_time().compareTo(parkedCars.get(key).plusMinutes(FREE_PARKING_DURATION)) > 0) {
                 parkObject.setDate_time(parkedCars.get(key));
                 parkedCars.remove(key);
                 collector.output().send(MessageBuilder.withPayload(parkObject.toString()).build());
             }
-        } else if (parkObject.getDate_time().minusHours(fineInterval).compareTo(finedCars.get(key)) > 0){
+        } else if (parkObject.getDate_time().compareTo(finedCars.get(key).plusHours(FINE_INTERVAL)) > 0) {
             finedCars.remove(key);
         }
     }
 
     @StreamListener(NOT_PAID_ROUT_INPUT)
-    void takeNotPaidCar(String notPaidCar) throws IOException {
+    public void takeNotPaidCar(String notPaidCar) throws IOException {
         ParkObject parkObject = mapper.readValue(notPaidCar, ParkObject.class);
-        finedCars.put(parkObject.getParking_id()+":"+parkObject.getCar_number(), parkObject.getDate_time());
+        finedCars.put(parkObject.getParking_id() + ":" + parkObject.getCar_number(), parkObject.getDate_time());
     }
 
-    void clearNotParkedCars(){
-        Map<String, LocalDateTime> parkedCarsSnapshot = parkedCars;
-        parkedCarsSnapshot.keySet()
+    public void clearNotParkedCars() {
+        ArrayList<String> keysToRemove = new ArrayList<>();
+        parkedCars.keySet()
                 .stream()
-                .filter(key -> parkedCarsSnapshot.get(key).minusMinutes(freeParkingDuration).compareTo(LocalDateTime.now()) > 0)
-                .forEach(key -> parkedCars.remove(key));
+                .filter(key -> parkedCars.get(key)
+                        .compareTo(LocalDateTime.now().minusMinutes(FREE_PARKING_DURATION + 2)) < 0)
+                .forEach(keysToRemove::add);
+        for (String key : keysToRemove) {
+            parkedCars.remove(key);
+        }
     }
 
-    void clearFinedCars() {
-        Map<String, LocalDateTime> finedCarsSnapshot = finedCars;
-        finedCarsSnapshot.keySet()
+    public void clearFinedCars() {
+        ArrayList<String> keysToRemove = new ArrayList<>();
+        finedCars.keySet()
                 .stream()
-                .filter(key -> finedCarsSnapshot.get(key).minusHours(fineInterval).compareTo(LocalDateTime.now()) > 0)
-                .forEach(key -> finedCars.remove(key));
+                .filter(key -> finedCars.get(key).
+                        compareTo(LocalDateTime.now().minusHours(FINE_INTERVAL)) < 0)
+                .forEach(keysToRemove::add);
+        for (String key : keysToRemove) {
+            finedCars.remove(key);
+        }
     }
+
+
 }

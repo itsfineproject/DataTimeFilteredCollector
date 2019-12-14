@@ -47,7 +47,11 @@
             <artifactId>spring-cloud-stream-test-support</artifactId>
             <scope>test</scope>
         </dependency>
-
+        <!-- Junit tests -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+        </dependency>
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>
